@@ -15,6 +15,8 @@ int passivesock(const char *service, const char *transport, int qlen) {
 
     struct addrinfo hints, *res, *p;
     int sockfd = -1, socktype, yes = 1;
+    int ultimo_error = 0;
+    const char *operacion_fallida = "socket";
 
     if (strcmp(transport, "udp") == 0)
         socktype = SOCK_DGRAM;
@@ -24,7 +26,7 @@ int passivesock(const char *service, const char *transport, int qlen) {
     memset(&hints, 0, sizeof(hints));
     hints.ai_family = AF_INET;    /* Soporta IPv4 e IPv6 */
     hints.ai_socktype = socktype;
-    hints.ai_flags = 0;    /* Escuchar en INADDR_ANY / cualquier interfaz */
+    hints.ai_flags = 0;    
 
     int err = getaddrinfo("127.0.0.1", service, &hints, &res);
     if (err != 0) {
@@ -35,14 +37,19 @@ int passivesock(const char *service, const char *transport, int qlen) {
     /* Iterar sobre las direcciones posibles */
     for (p = res; p != NULL; p = p->ai_next) {
         sockfd = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
-        if (sockfd < 0)
+        if (sockfd < 0) {
+            ultimo_error = errno;
+            operacion_fallida = "socket";
             continue;
+        }
 
         setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
 
         if (bind(sockfd, p->ai_addr, p->ai_addrlen) == 0)
             break;
-
+        ultimo_error = errno;
+        operacion_fallida = "bind";
+        
         close(sockfd);
         sockfd = -1;
     }
@@ -50,8 +57,8 @@ int passivesock(const char *service, const char *transport, int qlen) {
     freeaddrinfo(res);
 
     if (sockfd < 0) {
-        fprintf(stderr, "No se pudo hacer bind en el puerto/servicio %s: %s\n",
-                service, strerror(errno));
+        fprintf(stderr, "Error de %s en el puerto/servicio %s: %s\n",
+                operacion_fallida, service, strerror(ultimo_error));
         return -1;
     }
 
@@ -68,4 +75,3 @@ int passivesock(const char *service, const char *transport, int qlen) {
 int passiveTCP(const char *service, int qlen) {
     return passivesock(service, "tcp", qlen);
 }
-
