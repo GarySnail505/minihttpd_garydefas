@@ -24,6 +24,17 @@ static int socket_no_bloqueante(int fd)
     return 0;
 }
 
+static void cerrar_cliente(int epoll_fd, struct conexion *cliente)
+{
+    if (epoll_ctl(epoll_fd, EPOLL_CTL_DEL,
+                  cliente->fd, NULL) == -1) {
+        perror("epoll_ctl DEL");
+    }
+
+    close(cliente->fd);
+    free(cliente);
+}
+
 int main(int argc, char *argv[])
 {
     if (argc > 2) {
@@ -57,7 +68,8 @@ int main(int argc, char *argv[])
     }
     
     evento.events = EPOLLIN;
-    evento.data.fd = fd;
+    //evento.data.fd = fd; // ya no es necesario, se puede usar data.ptr para almacenar un puntero a la estructura de conexión
+    evento.data.ptr = NULL;
 
     if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, fd, &evento) == -1) {
         perror("epoll_ctl");
@@ -78,9 +90,9 @@ int main(int argc, char *argv[])
         }
     
         for (int i = 0; i < n; i++) {
-            int actual_fd = eventos[i].data.fd;
+            struct conexion *actual = eventos[i].data.ptr;
 
-            if (actual_fd == fd) { // socket escucha
+            if (actual == NULL) { // socket escucha
                 if (!(eventos[i].events & EPOLLIN)) {
                     fprintf(stderr, "Evento inesperado en socket de escucha\n");
                     status = EXIT_FAILURE;
@@ -94,20 +106,36 @@ int main(int argc, char *argv[])
                     if (sfd >= 0) {
                         printf("Cliente aceptado (descriptor %d).\n", sfd);
 
+                        struct conexion *cliente = malloc(sizeof(struct conexion));
+                        if (!cliente) {
+                            perror("malloc");
+                            close(sfd);
+                            continue; // si falla un cliente, no tiene porqué parar el servidor
+                        }
+
+                        // INICIALIZANDO LA ESTRUCTURA DE CONEXIÓN PERSISTENTE CON EL SOCKET DEL CLIENTE
+                        cliente->fd = sfd;
+                        cliente->used = 0;
+                        cliente->processed  = 0;
+                        cliente->estado = READING_HEADERS;
+                        
+
                         if (socket_no_bloqueante(sfd) == -1) {
                             close(sfd);
+                            free(cliente);
                             continue; // si falla un cliente, no tiene porqué parar el servidor
                         }
 
                         // Agregar el socket del cliente al epoll
                         struct epoll_event evento_cliente = {0};
                         evento_cliente.events = EPOLLIN;
-                        evento_cliente.data.fd = sfd;
+                        evento_cliente.data.ptr = cliente;
 
                         if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD,
                                       sfd, &evento_cliente) == -1) {
                             perror("epoll_ctl add cliente");
                             close(sfd);
+                            free(cliente);
                             continue;
                         }
                         continue;
@@ -123,35 +151,49 @@ int main(int argc, char *argv[])
                     break;
                 }
             } else {
-                // Evento perteneciente a un socket cliente
-                int sfd = actual_fd;
+                // Evento perteneciente a un socket cliente 
+                int sfd = actual->fd;
 
                 if (eventos[i].events & EPOLLIN) {
-                    char buffer[1024];
+                    // Leer datos del cliente
+                    size_t disponibles = sizeof(actual->buffer_recepcion) - actual->used;
+
+                    if (disponibles == 0) {
+                        fprintf(stderr, "Buffer de recepción lleno\n");
+                        cerrar_cliente(epoll_fd, actual);
+                        continue;
+                    }
+
                     ssize_t bytes_leidos;
 
-                    // Reintentar si una señal interrumpe read()
                     do {
-                        bytes_leidos = read(sfd, buffer, sizeof(buffer) - 1);
+                        bytes_leidos = read(
+                            sfd,
+                            actual->buffer_recepcion + actual->used,
+                            disponibles
+                        );
                     } while (bytes_leidos == -1 && errno == EINTR);
-
+                    
                     if (bytes_leidos > 0) {
-                        buffer[bytes_leidos] = '\0';
-                        printf("Datos recibidos del cliente %d: %s\n",
-                               sfd, buffer);
+                        actual->used += (size_t)bytes_leidos;
+
+                        printf("Cliente %d: %zu bytes acumulados\n",
+                               sfd, actual->used);
+
                     } else if (bytes_leidos == 0) {
                         printf("Cliente desconectado: %d\n", sfd);
-                        close(sfd);
+                        cerrar_cliente(epoll_fd, actual);
                     } else if (errno == EAGAIN || errno == EWOULDBLOCK) {
                         if (eventos[i].events & (EPOLLHUP | EPOLLERR))
-                            close(sfd);
+                            cerrar_cliente(epoll_fd, actual);
                     } else {
                         perror("read");
-                        close(sfd);
+                        cerrar_cliente(epoll_fd, actual);
+
                     }
                 } else if (eventos[i].events & (EPOLLERR | EPOLLHUP)) {
                     // Error o cierre notificado sin EPOLLIN
-                    close(sfd);
+                    cerrar_cliente(epoll_fd, actual);
                 }
             }
         }
