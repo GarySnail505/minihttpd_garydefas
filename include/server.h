@@ -2,6 +2,8 @@
 #ifndef SERVER_H
 #define SERVER_H
 
+#include <stddef.h>
+
 struct conexion {
     int fd;
     char buffer_recepcion[4096];
@@ -12,7 +14,6 @@ struct conexion {
         PROCESSING_REQUEST,
         WRITING_RESPONSE
     } estado;
-    struct sockaddr_storage addr;
 };
 
 int passivesock(const char *service, const char *transport, int qlen);
