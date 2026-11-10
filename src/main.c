@@ -1,4 +1,5 @@
 #include "server.h"
+#include "http.h"
 
 #include <sys/epoll.h>
 #include <fcntl.h>
@@ -6,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/socket.h>
+#include <string.h> //memove()
 #include <unistd.h>
 
 #define MAX_EVENTOS 16
@@ -154,8 +156,7 @@ int main(int argc, char *argv[])
                 // Evento perteneciente a un socket cliente 
                 int sfd = actual->fd;
 
-                if (eventos[i].events & EPOLLIN) {
-                    // Leer datos del cliente
+                if (eventos[i].events & EPOLLIN) { // Leer datos del cliente
                     size_t disponibles = sizeof(actual->buffer_recepcion) - actual->used;
 
                     if (disponibles == 0) {
@@ -173,19 +174,62 @@ int main(int argc, char *argv[])
                             disponibles
                         );
                     } while (bytes_leidos == -1 && errno == EINTR);
-                    
+                                         
+                    // Manejar el resultado de la lectura usando headers_end
                     if (bytes_leidos > 0) {
                         actual->used += (size_t)bytes_leidos;
-
+                    
                         printf("Cliente %d: %zu bytes acumulados\n",
                                sfd, actual->used);
+         
+                    if (actual->estado == READING_HEADERS) {
+                    
+                        while (actual->estado == READING_HEADERS) {
+                            if (actual->used == 0)
+                                break;
+                        
+                            size_t fin = headers_end(
+                                actual->buffer_recepcion,
+                                actual->used
+                            );
+                        
+                            if (fin == 0) {
+                                printf("Cliente %d: encabezados incompletos, used=%zu\n",
+                                       sfd, actual->used);
+                                break;
+                            }
+                        
+                            actual->processed = fin;
+                            actual->estado = PROCESSING_REQUEST;
+                        
+                            printf("Cliente %d: solicitud delimitada, fin=%zu\n",
+                                   sfd, fin);
+                            
+                            size_t pendientes = actual->used - actual->processed;
+                            
+                            memmove(
+                                actual->buffer_recepcion,
+                                actual->buffer_recepcion + actual->processed,
+                                pendientes
+                            );
+                        
+                            actual->used = pendientes;
+                            actual->processed = 0;
+                            actual->estado = READING_HEADERS;
+                        
+                            printf("Cliente %d: bytes pendientes=%zu\n",
+                                   sfd, actual->used);
+                        }
+                    }
 
                     } else if (bytes_leidos == 0) {
                         printf("Cliente desconectado: %d\n", sfd);
                         cerrar_cliente(epoll_fd, actual);
+
                     } else if (errno == EAGAIN || errno == EWOULDBLOCK) {
                         if (eventos[i].events & (EPOLLHUP | EPOLLERR))
                             cerrar_cliente(epoll_fd, actual);
+
                     } else {
                         perror("read");
                         cerrar_cliente(epoll_fd, actual);
