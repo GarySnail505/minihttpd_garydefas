@@ -2,6 +2,7 @@
 
 #include <string.h>
 #include <stdio.h>
+#include <strings.h>
 
 size_t headers_end(const char *buffer, size_t used)
 {
@@ -120,4 +121,90 @@ int analizar_linea_solicitud( // analiza: "GET /index.html HTTP/1.1\r\n"
     uri[longitud_uri] = '\0';
 
     return 0;
+}
+
+int analizar_connection(
+    const char *buffer,
+    size_t longitud,
+    int *keep_alive
+){
+    if (buffer == NULL || keep_alive == NULL) {
+        return -1;
+    }
+
+    *keep_alive = 1; // Valor por defecto (conexión persistente)
+
+    const char *inicio = buffer;
+    const char *fin = buffer + longitud;
+
+    while (inicio < fin) {
+        const char *linea_fin = memchr(inicio, '\n', fin - inicio);    
+        if (linea_fin == NULL) {
+            return 400;
+        }
+        // Comprobar que la línea termine en \r\n
+        if (linea_fin == inicio || linea_fin[-1] != '\r') {
+            return 400;
+        }
+        // Detectar la línea vacía que termina los encabezados
+        if (linea_fin == inicio + 1) {
+            return 0;
+        }
+
+        size_t linea_longitud = linea_fin - inicio + 1;
+        
+        if (linea_longitud >= 11 &&
+            strncasecmp(inicio, "Connection:", 11) == 0) {
+            
+            const char *valor_inicio = inicio + 11;
+            const char *valor_fin = linea_fin - 1;
+
+            const char *cursor = valor_inicio;
+
+            while (cursor < valor_fin) {
+            
+                // Buscar la siguiente coma
+                const char *coma = memchr(
+                    cursor,
+                    ',',
+                    valor_fin - cursor
+                );
+            
+                // Determinar dónde termina el token actual
+                const char *token_fin = (coma != NULL) ? coma : valor_fin;
+                const char *token_inicio = cursor;
+            
+                // Eliminar espacios iniciales
+                while (token_inicio < token_fin &&
+                       (*token_inicio == ' ' || *token_inicio == '\t')) {
+                    token_inicio++;
+                }
+            
+                // Eliminar espacios finales
+                while (token_fin > token_inicio &&
+                       (token_fin[-1] == ' ' || token_fin[-1] == '\t')) {
+                    token_fin--;
+                }
+            
+                size_t longitud_token = token_fin - token_inicio;
+            
+                // Comprobar si el token es close
+                if (longitud_token == 5 &&
+                    strncasecmp(token_inicio, "close", 5) == 0) {
+                    
+                    *keep_alive = 0;
+                }
+            
+                // Si no hay más comas, terminar
+                if (coma == NULL) {
+                    break;
+                }
+            
+                // Continuar después de la coma
+                cursor = coma + 1;
+            }
+        }
+                inicio = linea_fin + 1;
+    }    
+        return 400;
 }

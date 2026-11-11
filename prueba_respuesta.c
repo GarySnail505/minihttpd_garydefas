@@ -1,24 +1,24 @@
 #include <stdio.h>
-#include <string.h>
 #include "http.h"
 
 int main(void)
 {
-    char uri[256];
+    const char solicitud[] =
+        "GET / HTTP/1.1\r\n"
+        "Host: localhost\r\n"
+        "Connection: keep-alive, close\r\n"
+        "\r\n";
 
-    const char solicitud[] = "GET /index.html.com.ex HTTP/1.1\r\n";
+    int keep_alive = -1;
 
-    int resultado = analizar_linea_solicitud(
+    int resultado = analizar_connection(
         solicitud,
         sizeof(solicitud) - 1,
-        uri,
-        sizeof(uri)
+        &keep_alive
     );
 
     printf("Resultado: %d\n", resultado);
+    printf("Keep-alive: %d\n", keep_alive);
 
-    if (resultado == 0) {
-        printf("URI: %s\n", uri);
-    }
     return 0;
 }

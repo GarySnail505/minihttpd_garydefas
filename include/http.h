@@ -19,4 +19,10 @@ int analizar_linea_solicitud( // analiza: "GET /index.html HTTP/1.1\r\n"
     size_t capacidad_uri
 );
 
+int analizar_connection(
+    const char *buffer,
+    size_t longitud,
+    int *keep_alive
+);
+
 #endif /* HTTP_H */
