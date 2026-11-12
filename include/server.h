@@ -14,6 +14,10 @@ struct conexion {
         PROCESSING_REQUEST,
         WRITING_RESPONSE
     } estado;
+    char buffer_salida[1024]; // respuesta http
+    size_t salida_len;
+    size_t salida_enviados;
+    int keep_alive;
 };
 
 int passivesock(const char *service, const char *transport, int qlen);

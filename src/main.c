@@ -120,8 +120,10 @@ int main(int argc, char *argv[])
                         cliente->used = 0;
                         cliente->processed  = 0;
                         cliente->estado = READING_HEADERS;
+                        cliente->salida_len = 0;
+                        cliente->salida_enviados = 0;
+                        cliente->keep_alive = 1;
                         
-
                         if (socket_no_bloqueante(sfd) == -1) {
                             close(sfd);
                             free(cliente);
@@ -238,6 +240,24 @@ int main(int argc, char *argv[])
                                 printf("Host: %s\n", host);
                                 printf("User-Agent: %s\n", user_agent);
                                 printf("Keep-alive: %d\n", keep_alive);
+
+                                int preparado = construir_respuesta_fija(
+                                    actual->buffer_salida,
+                                    sizeof(actual->buffer_salida),
+                                    &actual->salida_len
+                                );
+                                
+                                if (preparado == 0) {
+                                    actual->salida_enviados = 0;
+                                    actual->keep_alive = keep_alive;
+                                
+                                    printf("Cliente %d: respuesta preparada, %zu bytes\n",
+                                           sfd, actual->salida_len);
+                                } else {
+                                    fprintf(stderr,
+                                            "Cliente %d: error al preparar respuesta\n",
+                                            sfd);
+                                }
                             } else {
                                 printf("Cliente %d: error HTTP %d\n", sfd, codigo);
                             }
