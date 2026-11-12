@@ -25,4 +25,14 @@ int analizar_connection(
     int *keep_alive
 );
 
+int analizar_encabezados(
+    const char *buffer,
+    size_t longitud,
+    char *host,
+    size_t capacidad_host,
+    char *user_agent,
+    size_t capacidad_user_agent,
+    int *keep_alive
+);
+
 #endif /* HTTP_H */

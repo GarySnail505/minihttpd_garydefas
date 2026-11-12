@@ -205,6 +205,43 @@ int main(int argc, char *argv[])
                             printf("Cliente %d: solicitud delimitada, fin=%zu\n",
                                    sfd, fin);
                             
+                            char uri[256];
+                            char host[128];
+                            char user_agent[256];
+                            int keep_alive = 1;
+
+                            // Analizar la primera línea: GET, URI y HTTP/1.1
+                            int codigo = analizar_linea_solicitud(
+                                actual->buffer_recepcion,
+                                fin,
+                                uri,
+                                sizeof(uri)
+                            );
+
+                            // Si la primera línea es válida, analizar encabezados
+                            if (codigo == 0) {
+                                codigo = analizar_encabezados(
+                                    actual->buffer_recepcion,
+                                    fin,
+                                    host,
+                                    sizeof(host),
+                                    user_agent,
+                                    sizeof(user_agent),
+                                    &keep_alive
+                                );
+                            }
+
+                            // Mostrar los resultados del procesamiento
+                            if (codigo == 0) {
+                                printf("Cliente %d: GET válido\n", sfd);
+                                printf("URI: %s\n", uri);
+                                printf("Host: %s\n", host);
+                                printf("User-Agent: %s\n", user_agent);
+                                printf("Keep-alive: %d\n", keep_alive);
+                            } else {
+                                printf("Cliente %d: error HTTP %d\n", sfd, codigo);
+                            }
+                            
                             size_t pendientes = actual->used - actual->processed;
                             
                             memmove(

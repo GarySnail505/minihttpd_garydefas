@@ -208,3 +208,129 @@ int analizar_connection(
     }    
         return 400;
 }
+
+int analizar_encabezados(
+    const char *buffer,
+    size_t longitud,
+    char *host,
+    size_t capacidad_host,
+    char *user_agent,
+    size_t capacidad_user_agent,
+    int *keep_alive
+) {
+    if (buffer == NULL || host == NULL ||
+        user_agent == NULL || keep_alive == NULL ||
+        capacidad_host == 0 || capacidad_user_agent == 0) {
+        return -1;
+    }
+
+    host[0] = '\0';
+    user_agent[0] = '\0';
+
+    const char *inicio = buffer;
+    const char *fin = buffer + longitud;
+    int host_encontrado = 0;
+
+    // 1. Saltar la primera línea HTTP (GET /... HTTP/1.1)
+    const char *linea_fin = memchr(inicio, '\n', fin - inicio);
+
+    if (linea_fin == NULL || linea_fin == inicio ||
+        linea_fin[-1] != '\r') {
+        return 400;
+    }
+
+    inicio = linea_fin + 1;
+
+    // 2. Recorrer las líneas de encabezados
+    while (inicio < fin) {
+
+        linea_fin = memchr(inicio, '\n', fin - inicio);
+
+        if (linea_fin == NULL || linea_fin == inicio ||
+            linea_fin[-1] != '\r') {
+            return 400;
+        }
+
+        const char *fin_contenido = linea_fin - 1;
+
+        // 3. Detectar la línea vacía final
+        if (fin_contenido == inicio) {
+
+            if (!host_encontrado) {
+                return 400;
+            }
+
+            // Reutilizar nuestro analizador existente
+            return analizar_connection(
+                buffer, longitud, keep_alive
+            );
+        }
+
+        // 4. Separar el nombre y el valor mediante ':'
+        const char *dos_puntos = memchr(
+            inicio, ':', fin_contenido - inicio
+        );
+
+        if (dos_puntos == NULL || dos_puntos == inicio) {
+            return 400;
+        }
+
+        size_t longitud_nombre = dos_puntos - inicio;
+
+        const char *valor_inicio = dos_puntos + 1;
+        const char *valor_fin = fin_contenido;
+
+        // Eliminar espacios iniciales
+        while (valor_inicio < valor_fin &&
+               (*valor_inicio == ' ' || *valor_inicio == '\t')) {
+            valor_inicio++;
+        }
+
+        // Eliminar espacios finales
+        while (valor_fin > valor_inicio &&
+               (valor_fin[-1] == ' ' || valor_fin[-1] == '\t')) {
+            valor_fin--;
+        }
+
+        // 5. Identificar el encabezado
+        char *destino = NULL;
+        size_t capacidad = 0;
+
+        if (longitud_nombre == 4 &&
+            strncasecmp(inicio, "Host", 4) == 0) {
+
+            if (host_encontrado || valor_inicio == valor_fin) {
+                return 400;
+            }
+
+            host_encontrado = 1;
+            destino = host;
+            capacidad = capacidad_host;
+
+        } else if (longitud_nombre == 10 &&
+                   strncasecmp(inicio, "User-Agent", 10) == 0) {
+
+            destino = user_agent;
+            capacidad = capacidad_user_agent;
+        }
+
+        // 6. Copiar el valor si es un encabezado reconocido
+        if (destino != NULL) {
+
+            size_t n = valor_fin - valor_inicio;
+
+            if (n >= capacidad ||
+                memchr(valor_inicio, '\0', n) != NULL) {
+                return 400;
+            }
+
+            memcpy(destino, valor_inicio, n);
+            destino[n] = '\0';
+        }
+
+        // 7. Continuar con el siguiente encabezado
+        inicio = linea_fin + 1;
+    }
+
+    return 400;
+}
