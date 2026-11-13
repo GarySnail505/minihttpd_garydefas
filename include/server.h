@@ -23,4 +23,6 @@ struct conexion {
 int passivesock(const char *service, const char *transport, int qlen);
 int passiveTCP(const char *service, int qlen);
 
+int enviar_pendiente(struct conexion *cliente);
+
 #endif /* SERVER_H */

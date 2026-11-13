@@ -1,5 +1,6 @@
 /* passivesock.c - passivesock moderno con getaddrinfo() */
 #define _POSIX_C_SOURCE 200809L
+#include "server.h"
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netdb.h>
@@ -75,4 +76,49 @@ int passivesock(const char *service, const char *transport, int qlen) {
 
 int passiveTCP(const char *service, int qlen) {
     return passivesock(service, "tcp", qlen);
+}
+
+int enviar_pendiente(struct conexion *cliente){
+    if (cliente == NULL) {
+        return -1;
+    }
+    if (cliente->salida_enviados > cliente->salida_len) {
+        return -1;
+    }
+    if (cliente->salida_enviados == cliente->salida_len) {
+        return 1;
+    }
+    ssize_t bytes_enviados;
+
+    do {
+        bytes_enviados = send(
+            cliente->fd,
+            cliente->buffer_salida + cliente->salida_enviados,
+            cliente->salida_len - cliente->salida_enviados,
+            MSG_NOSIGNAL
+        );
+    } while (bytes_enviados == -1 && errno == EINTR);
+
+    if (bytes_enviados == -1) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            // No se pudo enviar ahora, intentar más tarde
+            return 0;
+        } else {
+            perror("send");
+            return -1; // Error fatal
+        }
+    }
+    if (bytes_enviados == 0) {
+        return -1;
+    }
+
+    cliente->salida_enviados += (size_t)bytes_enviados;
+
+    if (cliente->salida_enviados == cliente->salida_len) {
+        // Se ha enviado toda la respuesta
+        return 1;
+    }
+
+    // Aún quedan datos por enviar
+    return 0;
 }
