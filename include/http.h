@@ -11,7 +11,9 @@ int construir_respuesta(
     size_t capacidad,
     size_t *longitud,
     int codigo,
-    int keep_alive
+    int keep_alive,
+    const char *cuerpo, 
+    size_t longitud_cuerpo
 );
 
 int construir_respuesta_fija(

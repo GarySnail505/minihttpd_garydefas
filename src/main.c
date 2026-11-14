@@ -1,5 +1,6 @@
 #include "server.h"
 #include "http.h"
+#include "files.h"
 
 #include <sys/epoll.h>
 #include <fcntl.h>
@@ -62,6 +63,8 @@ static int preparar_siguiente(struct conexion *cliente)
     cliente->processed = fin == 0 ? cliente->used : fin;
 
     int codigo = 400;
+    char cuerpo[sizeof(cliente->buffer_salida)];
+    size_t longitud_cuerpo = 0;
     int keep_alive = 0;
     if (fin != 0) {
         char uri[256];
@@ -79,13 +82,23 @@ static int preparar_siguiente(struct conexion *cliente)
         if (codigo == 0) {
             printf("Cliente %d: GET válido, URI=%s, Host=%s, User-Agent=%s\n",
                    cliente->fd, uri, host, user_agent);
+                    if (strcmp(uri, "/") != 0) {
+                        codigo = 404;
+                    } else {
+                        int resultado = leer_archivo("www/index.html", cuerpo, sizeof(cuerpo),
+                                                     &longitud_cuerpo);
+                        if (resultado == 1)
+                            codigo = 404;
+                        else if (resultado == -1)
+                            return -1;
+                    }
         }
     }
 
     cliente->keep_alive = codigo == 0 && keep_alive;
     if (construir_respuesta(cliente->buffer_salida, sizeof(cliente->buffer_salida),
                             &cliente->salida_len, codigo == 0 ? 200 : codigo,
-                            cliente->keep_alive) == -1) {
+                            cliente->keep_alive, cuerpo, longitud_cuerpo) == -1) {
         fprintf(stderr, "Cliente %d: error al preparar respuesta\n", cliente->fd);
         return -1;
     }

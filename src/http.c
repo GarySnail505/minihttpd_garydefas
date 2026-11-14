@@ -26,7 +26,9 @@ int construir_respuesta(
     size_t capacidad,
     size_t *longitud,
     int codigo,
-    int keep_alive
+    int keep_alive,
+    const char *cuerpo, 
+    size_t longitud_cuerpo
 ) {
     if (buffer == NULL || longitud == NULL)
         return -1;
@@ -34,17 +36,17 @@ int construir_respuesta(
     *longitud = 0;
     const char *estado;
     const char *encabezados = "";
-    const char *cuerpo = "";
 
     switch (codigo) {
     case 200:
         estado = "200 OK";
-        encabezados = "Date: Mon, 09 Nov 2026 20:00:00 GMT\r\n"
-                      "Content-Type: text/html\r\n";
-        cuerpo = "<p>Hola</p>";
+        encabezados = "Content-Type: text/html\r\n";
         break;
     case 400:
         estado = "400 Bad Request";
+        break;
+    case 404:
+        estado = "404 Not Found";
         break;
     case 405:
         estado = "405 Method Not Allowed";
@@ -55,18 +57,28 @@ int construir_respuesta(
     }
 
     const char *conexion = codigo == 200 && keep_alive ? "" : "Connection: close\r\n";
-    int len = snprintf(buffer, capacidad, "HTTP/1.1 %s\r\n%sContent-Length: %zu\r\n%s\r\n%s",
-                       estado, encabezados, strlen(cuerpo), conexion, cuerpo);
+    int len = snprintf(buffer, capacidad,
+                        "HTTP/1.1 %s\r\n%sContent-Length: %zu\r\n%s\r\n",
+                        estado, encabezados, longitud_cuerpo, conexion);
     if (len < 0 || (size_t)len >= capacidad)
         return -1;
-
-    *longitud = (size_t)len;
+        
+    if (longitud_cuerpo > capacidad - (size_t)len)
+        return -1;
+        
+    if (longitud_cuerpo > 0)
+        memcpy(buffer + len, cuerpo, longitud_cuerpo);
+        
+    *longitud = (size_t)len + longitud_cuerpo;
     return 0;
 }
 
+
 int construir_respuesta_fija(char *buffer, size_t capacidad, size_t *longitud)
 {
-    return construir_respuesta(buffer, capacidad, longitud, 200, 1);
+    const char cuerpo[] = "<p>Hola</p>";
+    return construir_respuesta(buffer, capacidad, longitud, 200, 1,
+                               cuerpo, sizeof(cuerpo) - 1);
 }
 
 int analizar_linea_solicitud( // analiza: "GET /index.html HTTP/1.1\r\n"
