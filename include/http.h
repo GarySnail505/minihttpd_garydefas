@@ -6,6 +6,14 @@
 /* Devuelve el limite tras CRLF CRLF, o 0 si los encabezados estan incompletos. */
 size_t headers_end(const char *buffer, size_t used);
 
+int construir_respuesta(
+    char *buffer,
+    size_t capacidad,
+    size_t *longitud,
+    int codigo,
+    int keep_alive
+);
+
 int construir_respuesta_fija(
     char *buffer,
     size_t capacidad,

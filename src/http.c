@@ -21,30 +21,52 @@ size_t headers_end(const char *buffer, size_t used)
     return 0; // No se encontraron los encabezados completos
 }
 
-int construir_respuesta_fija(
+int construir_respuesta(
     char *buffer,
     size_t capacidad,
-    size_t *longitud
-){
-    if (buffer == NULL || longitud == NULL) {
+    size_t *longitud,
+    int codigo,
+    int keep_alive
+) {
+    if (buffer == NULL || longitud == NULL)
+        return -1;
+
+    *longitud = 0;
+    const char *estado;
+    const char *encabezados = "";
+    const char *cuerpo = "";
+
+    switch (codigo) {
+    case 200:
+        estado = "200 OK";
+        encabezados = "Date: Mon, 09 Nov 2026 20:00:00 GMT\r\n"
+                      "Content-Type: text/html\r\n";
+        cuerpo = "<p>Hola</p>";
+        break;
+    case 400:
+        estado = "400 Bad Request";
+        break;
+    case 405:
+        estado = "405 Method Not Allowed";
+        encabezados = "Allow: GET\r\n";
+        break;
+    default:
         return -1;
     }
 
-    *longitud = 0; 
-    const char *respuesta = "HTTP/1.1 200 OK\r\n"
-                "Date: Mon, 09 Nov 2026 20:00:00 GMT\r\n"
-                "Content-Type: text/html\r\n"
-                "Content-Length: 11\r\n"
-                "\r\n"
-                "<p>Hola</p>";  
-    size_t len = strlen(respuesta);
-    if (len >= capacidad) {
-        return -1; // No hay suficiente espacio
-    }
-    memcpy(buffer, respuesta, len + 1);
-    *longitud = len;
-    
+    const char *conexion = codigo == 200 && keep_alive ? "" : "Connection: close\r\n";
+    int len = snprintf(buffer, capacidad, "HTTP/1.1 %s\r\n%sContent-Length: %zu\r\n%s\r\n%s",
+                       estado, encabezados, strlen(cuerpo), conexion, cuerpo);
+    if (len < 0 || (size_t)len >= capacidad)
+        return -1;
+
+    *longitud = (size_t)len;
     return 0;
+}
+
+int construir_respuesta_fija(char *buffer, size_t capacidad, size_t *longitud)
+{
+    return construir_respuesta(buffer, capacidad, longitud, 200, 1);
 }
 
 int analizar_linea_solicitud( // analiza: "GET /index.html HTTP/1.1\r\n"
@@ -115,6 +137,12 @@ int analizar_linea_solicitud( // analiza: "GET /index.html HTTP/1.1\r\n"
 
     if (longitud_uri >= capacidad_uri) {
         return 400;
+    }
+
+    for (const char *p = inicio_uri; p < espacio2; p++) {
+        unsigned char byte = (unsigned char)*p;
+        if (byte <= ' ' || byte == 127)
+            return 400;
     }
 
     memcpy(uri, inicio_uri, longitud_uri);
@@ -230,6 +258,7 @@ int analizar_encabezados(
     const char *inicio = buffer;
     const char *fin = buffer + longitud;
     int host_encontrado = 0;
+    int content_length_encontrado = 0;
 
     // 1. Saltar la primera línea HTTP (GET /... HTTP/1.1)
     const char *linea_fin = memchr(inicio, '\n', fin - inicio);
@@ -276,6 +305,13 @@ int analizar_encabezados(
         }
 
         size_t longitud_nombre = dos_puntos - inicio;
+        const char *caracteres_nombre =
+            "!#$%&'*+-.^_`|~0123456789"
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+        for (const char *p = inicio; p < dos_puntos; p++) {
+            if (*p == '\0' || strchr(caracteres_nombre, (unsigned char)*p) == NULL)
+                return 400;
+        }
 
         const char *valor_inicio = dos_puntos + 1;
         const char *valor_fin = fin_contenido;
@@ -290,6 +326,29 @@ int analizar_encabezados(
         while (valor_fin > valor_inicio &&
                (valor_fin[-1] == ' ' || valor_fin[-1] == '\t')) {
             valor_fin--;
+        }
+
+        for (const char *p = valor_inicio; p < valor_fin; p++) {
+            unsigned char byte = (unsigned char)*p;
+            if ((byte < ' ' && byte != '\t') || byte == 127)
+                return 400;
+        }
+
+        // Esta etapa solo encuadra solicitudes sin cuerpo.
+        if (longitud_nombre == 17 &&
+            strncasecmp(inicio, "Transfer-Encoding", 17) == 0) {
+            return 400;
+        }
+        if (longitud_nombre == 14 &&
+            strncasecmp(inicio, "Content-Length", 14) == 0) {
+            if (content_length_encontrado || valor_inicio == valor_fin)
+                return 400;
+
+            for (const char *p = valor_inicio; p < valor_fin; p++) {
+                if (*p != '0')
+                    return 400;
+            }
+            content_length_encontrado = 1;
         }
 
         // 5. Identificar el encabezado
@@ -319,8 +378,7 @@ int analizar_encabezados(
 
             size_t n = valor_fin - valor_inicio;
 
-            if (n >= capacidad ||
-                memchr(valor_inicio, '\0', n) != NULL) {
+            if (n >= capacidad) {
                 return 400;
             }
 

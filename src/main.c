@@ -4,10 +4,11 @@
 #include <sys/epoll.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/socket.h>
-#include <string.h> //memove()
+#include <string.h>
 #include <unistd.h>
 
 #define MAX_EVENTOS 16
@@ -35,6 +36,69 @@ static void cerrar_cliente(int epoll_fd, struct conexion *cliente)
 
     close(cliente->fd);
     free(cliente);
+}
+
+static int cambiar_interes(int epoll_fd, struct conexion *cliente, uint32_t eventos)
+{
+    struct epoll_event evento = {0};
+    evento.events = eventos;
+    evento.data.ptr = cliente;
+
+    if (epoll_ctl(epoll_fd, EPOLL_CTL_MOD, cliente->fd, &evento) == -1) {
+        perror("epoll_ctl MOD cliente");
+        return -1;
+    }
+    return 0;
+}
+
+/* 0: faltan encabezados, 1: respuesta lista, -1: falló la preparación. */
+static int preparar_siguiente(struct conexion *cliente)
+{
+    size_t fin = headers_end(cliente->buffer_recepcion, cliente->used);
+    if (fin == 0 && cliente->used < sizeof(cliente->buffer_recepcion))
+        return 0;
+
+    cliente->estado = PROCESSING_REQUEST;
+    cliente->processed = fin == 0 ? cliente->used : fin;
+
+    int codigo = 400;
+    int keep_alive = 0;
+    if (fin != 0) {
+        char uri[256];
+        char host[128];
+        char user_agent[256];
+
+        codigo = analizar_linea_solicitud(cliente->buffer_recepcion, fin,
+                                         uri, sizeof(uri));
+        if (codigo == 0) {
+            codigo = analizar_encabezados(cliente->buffer_recepcion, fin,
+                                          host, sizeof(host),
+                                          user_agent, sizeof(user_agent),
+                                          &keep_alive);
+        }
+        if (codigo == 0) {
+            printf("Cliente %d: GET válido, URI=%s, Host=%s, User-Agent=%s\n",
+                   cliente->fd, uri, host, user_agent);
+        }
+    }
+
+    cliente->keep_alive = codigo == 0 && keep_alive;
+    if (construir_respuesta(cliente->buffer_salida, sizeof(cliente->buffer_salida),
+                            &cliente->salida_len, codigo == 0 ? 200 : codigo,
+                            cliente->keep_alive) == -1) {
+        fprintf(stderr, "Cliente %d: error al preparar respuesta\n", cliente->fd);
+        return -1;
+    }
+
+    size_t pendientes = cliente->used - cliente->processed;
+    memmove(cliente->buffer_recepcion,
+            cliente->buffer_recepcion + cliente->processed, pendientes);
+    cliente->used = pendientes;
+    cliente->processed = 0;
+
+    cliente->salida_enviados = 0;
+    cliente->estado = WRITING_RESPONSE;
+    return 1;
 }
 
 int main(int argc, char *argv[])
@@ -154,151 +218,65 @@ int main(int argc, char *argv[])
                     perror("accept");
                     break;
                 }
-            } else {
-                // Evento perteneciente a un socket cliente 
-                int sfd = actual->fd;
+                continue;
+            }
 
-                if (eventos[i].events & EPOLLIN) { // Leer datos del cliente
-                    size_t disponibles = sizeof(actual->buffer_recepcion) - actual->used;
+            uint32_t eventos_cliente = eventos[i].events;
+            if (eventos_cliente & (EPOLLERR | EPOLLHUP)) {
+                cerrar_cliente(epoll_fd, actual);
+                continue;
+            }
 
-                    if (disponibles == 0) {
-                        fprintf(stderr, "Buffer de recepción lleno\n");
-                        cerrar_cliente(epoll_fd, actual);
-                        continue;
-                    }
+            if (actual->estado == WRITING_RESPONSE && (eventos_cliente & EPOLLOUT)) {
+                int resultado = enviar_pendiente(actual);
+                if (resultado == 0)
+                    continue;
 
-                    ssize_t bytes_leidos;
+                if (resultado == -1 || !actual->keep_alive) {
+                    cerrar_cliente(epoll_fd, actual);
+                    continue;
+                }
 
-                    do {
-                        bytes_leidos = read(
-                            sfd,
-                            actual->buffer_recepcion + actual->used,
-                            disponibles
-                        );
-                    } while (bytes_leidos == -1 && errno == EINTR);
-                                         
-                    // Manejar el resultado de la lectura usando headers_end
-                    if (bytes_leidos > 0) {
-                        actual->used += (size_t)bytes_leidos;
-                    
-                        printf("Cliente %d: %zu bytes acumulados\n",
-                               sfd, actual->used);
-         
-                    if (actual->estado == READING_HEADERS) {
-                    
-                        while (actual->estado == READING_HEADERS) {
-                            if (actual->used == 0)
-                                break;
-                        
-                            size_t fin = headers_end(
-                                actual->buffer_recepcion,
-                                actual->used
-                            );
-                        
-                            if (fin == 0) {
-                                printf("Cliente %d: encabezados incompletos, used=%zu\n",
-                                       sfd, actual->used);
-                                break;
-                            }
-                        
-                            actual->processed = fin;
-                            actual->estado = PROCESSING_REQUEST;
-                        
-                            printf("Cliente %d: solicitud delimitada, fin=%zu\n",
-                                   sfd, fin);
-                            
-                            char uri[256];
-                            char host[128];
-                            char user_agent[256];
-                            int keep_alive = 1;
+                actual->estado = READING_HEADERS;
+                actual->salida_len = 0;
+                actual->salida_enviados = 0;
 
-                            // Analizar la primera línea: GET, URI y HTTP/1.1
-                            int codigo = analizar_linea_solicitud(
-                                actual->buffer_recepcion,
-                                fin,
-                                uri,
-                                sizeof(uri)
-                            );
-
-                            // Si la primera línea es válida, analizar encabezados
-                            if (codigo == 0) {
-                                codigo = analizar_encabezados(
-                                    actual->buffer_recepcion,
-                                    fin,
-                                    host,
-                                    sizeof(host),
-                                    user_agent,
-                                    sizeof(user_agent),
-                                    &keep_alive
-                                );
-                            }
-
-                            // Mostrar los resultados del procesamiento
-                            if (codigo == 0) {
-                                printf("Cliente %d: GET válido\n", sfd);
-                                printf("URI: %s\n", uri);
-                                printf("Host: %s\n", host);
-                                printf("User-Agent: %s\n", user_agent);
-                                printf("Keep-alive: %d\n", keep_alive);
-
-                                int preparado = construir_respuesta_fija(
-                                    actual->buffer_salida,
-                                    sizeof(actual->buffer_salida),
-                                    &actual->salida_len
-                                );
-                                
-                                if (preparado == 0) {
-                                    actual->salida_enviados = 0;
-                                    actual->keep_alive = keep_alive;
-                                
-                                    printf("Cliente %d: respuesta preparada, %zu bytes\n",
-                                           sfd, actual->salida_len);
-                                } else {
-                                    fprintf(stderr,
-                                            "Cliente %d: error al preparar respuesta\n",
-                                            sfd);
-                                }
-                            } else {
-                                printf("Cliente %d: error HTTP %d\n", sfd, codigo);
-                            }
-                            
-                            size_t pendientes = actual->used - actual->processed;
-                            
-                            memmove(
-                                actual->buffer_recepcion,
-                                actual->buffer_recepcion + actual->processed,
-                                pendientes
-                            );
-                        
-                            actual->used = pendientes;
-                            actual->processed = 0;
-                            actual->estado = READING_HEADERS;
-                        
-                            printf("Cliente %d: bytes pendientes=%zu\n",
-                                   sfd, actual->used);
-                        }
-                    }
-
-                    } else if (bytes_leidos == 0) {
-                        printf("Cliente desconectado: %d\n", sfd);
-                        cerrar_cliente(epoll_fd, actual);
-
-                    } else if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                        if (eventos[i].events & (EPOLLHUP | EPOLLERR))
-                            cerrar_cliente(epoll_fd, actual);
-
-                    } else {
-                        perror("read");
-                        cerrar_cliente(epoll_fd, actual);
-
-                    }
-                } else if (eventos[i].events & (EPOLLERR | EPOLLHUP)) {
-                    // Error o cierre notificado sin EPOLLIN
+                // Una solicitud completa en el búfer no produce otro EPOLLIN.
+                int preparado = preparar_siguiente(actual);
+                if (preparado == -1 ||
+                    (preparado == 0 && cambiar_interes(epoll_fd, actual, EPOLLIN) == -1)) {
                     cerrar_cliente(epoll_fd, actual);
                 }
+                continue;
+            }
+
+            if (actual->estado != READING_HEADERS || !(eventos_cliente & EPOLLIN))
+                continue;
+
+            size_t disponibles = sizeof(actual->buffer_recepcion) - actual->used;
+            ssize_t bytes_leidos;
+            do {
+                bytes_leidos = read(actual->fd,
+                                    actual->buffer_recepcion + actual->used, disponibles);
+            } while (bytes_leidos == -1 && errno == EINTR);
+
+            if (bytes_leidos == -1 && (errno == EAGAIN || errno == EWOULDBLOCK))
+                continue;
+
+            if (bytes_leidos <= 0) {
+                if (bytes_leidos == -1)
+                    perror("read");
+                cerrar_cliente(epoll_fd, actual);
+                continue;
+            }
+
+            actual->used += (size_t)bytes_leidos;
+            int preparado = preparar_siguiente(actual);
+            if (preparado == -1 ||
+                (preparado == 1 && cambiar_interes(epoll_fd, actual, EPOLLOUT) == -1)) {
+                cerrar_cliente(epoll_fd, actual);
             }
         }
-
         if (status == EXIT_FAILURE)
             break;
     }
