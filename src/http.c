@@ -54,6 +54,9 @@ int construir_cabecera(
         estado = "405 Method Not Allowed";
         encabezados = "Allow: GET\r\n";
         break;
+    case 500:
+        estado = "500 Internal Server Error";
+        break;
     default:
         return -1;
     }

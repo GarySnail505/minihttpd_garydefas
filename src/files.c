@@ -41,6 +41,7 @@ int abrir_archivo(const char *ruta, FILE **archivo, size_t *longitud)
             return 1;
         if (errno == EACCES || errno == EPERM || errno == ELOOP)
             return 403;
+        perror("fopen");
         return -1;
     }
 
@@ -48,8 +49,12 @@ int abrir_archivo(const char *ruta, FILE **archivo, size_t *longitud)
     if (fseek(abierto, 0, SEEK_END) == 0)
         tamanio = ftell(abierto); // obtener el tamaño del archivo (content-length)
 
-    if (tamanio < 0 || (uintmax_t)tamanio > SIZE_MAX ||
-        fseek(abierto, 0, SEEK_SET) != 0) { // restablecer el puntero al inicio
+    if (tamanio >= 0 && (uintmax_t)tamanio > SIZE_MAX) {
+        errno = EOVERFLOW;
+        tamanio = -1;
+    }
+    if (tamanio < 0 || fseek(abierto, 0, SEEK_SET) != 0) {
+        perror("preparar archivo");
         fclose(abierto);
         return -1;
     }
@@ -97,16 +102,20 @@ int resolver_ruta_www(const char *uri, char *ruta)
     }
 
     char raiz[PATH_MAX];
-    if (realpath("www", raiz) == NULL)
+    if (realpath("www", raiz) == NULL) {
+        perror("realpath www");
         return -1;
+    }
     size_t longitud_raiz = strlen(raiz);
 
     int falta_archivo = 0;
     while (realpath(candidata, ruta) == NULL) {
         if (errno == EACCES || errno == EPERM || errno == ELOOP)
             return 403;
-        if (errno != ENOENT && errno != ENOTDIR)
+        if (errno != ENOENT && errno != ENOTDIR) {
+            perror("realpath recurso");
             return -1;
+        }
 
         // Un recurso ausente aún puede estar bajo un enlace a un directorio externo.
         char *barra = strrchr(candidata, '/');
@@ -130,6 +139,7 @@ int resolver_ruta_www(const char *uri, char *ruta)
             return 404;
         if (errno == EACCES || errno == EPERM || errno == ELOOP)
             return 403;
+        perror("stat");
         return -1;
     }
 

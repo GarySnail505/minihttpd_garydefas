@@ -98,18 +98,25 @@ static int preparar_siguiente(struct conexion *cliente)
                 else
                     tipo_contenido = tipo_mime(ruta);
             }
-            if (codigo == -1)
-                return -1;
         }
     }
 
     cliente->keep_alive = codigo == 0 && keep_alive;
-    if (construir_cabecera(cliente->buffer_salida, sizeof(cliente->buffer_salida),
+    if (codigo == -1 ||
+        construir_cabecera(cliente->buffer_salida, sizeof(cliente->buffer_salida),
                            &cliente->salida_len, codigo == 0 ? 200 : codigo,
                            cliente->keep_alive, cliente->archivo_restante,
                            tipo_contenido) == -1) {
-        fprintf(stderr, "Cliente %d: error al preparar respuesta\n", cliente->fd);
-        return -1;
+        fprintf(stderr, "Cliente %d: error interno al preparar respuesta\n", cliente->fd);
+        if (cliente->archivo != NULL) {
+            fclose(cliente->archivo);
+            cliente->archivo = NULL;
+        }
+        cliente->archivo_restante = 0;
+        cliente->keep_alive = 0;
+        if (construir_cabecera(cliente->buffer_salida, sizeof(cliente->buffer_salida),
+                               &cliente->salida_len, 500, 0, 0, NULL) == -1)
+            return -1;
     }
 
     size_t pendientes = cliente->used - cliente->processed;
@@ -269,6 +276,10 @@ int main(int argc, char *argv[])
                     size_t leidos = fread(actual->buffer_salida, 1, bloque,
                                          actual->archivo);
                     if (leidos != bloque) {
+                        if (ferror(actual->archivo))
+                            perror("fread");
+                        else
+                            fprintf(stderr, "Cliente %d: fin de archivo inesperado\n", actual->fd);
                         cerrar_cliente(epoll_fd, actual);
                         continue;
                     }
