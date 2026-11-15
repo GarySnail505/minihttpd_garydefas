@@ -21,13 +21,12 @@ size_t headers_end(const char *buffer, size_t used)
     return 0; // No se encontraron los encabezados completos
 }
 
-int construir_respuesta(
+int construir_cabecera(
     char *buffer,
     size_t capacidad,
     size_t *longitud,
     int codigo,
     int keep_alive,
-    const char *cuerpo, 
     size_t longitud_cuerpo
 ) {
     if (buffer == NULL || longitud == NULL)
@@ -62,17 +61,36 @@ int construir_respuesta(
                         estado, encabezados, longitud_cuerpo, conexion);
     if (len < 0 || (size_t)len >= capacidad)
         return -1;
-        
-    if (longitud_cuerpo > capacidad - (size_t)len)
-        return -1;
-        
-    if (longitud_cuerpo > 0)
-        memcpy(buffer + len, cuerpo, longitud_cuerpo);
-        
-    *longitud = (size_t)len + longitud_cuerpo;
+
+    *longitud = (size_t)len;
     return 0;
 }
 
+int construir_respuesta(
+    char *buffer,
+    size_t capacidad,
+    size_t *longitud,
+    int codigo,
+    int keep_alive,
+    const char *cuerpo,
+    size_t longitud_cuerpo
+) {
+    if (construir_cabecera(buffer, capacidad, longitud, codigo,
+                           keep_alive, longitud_cuerpo) == -1)
+        return -1;
+    
+    // Verificar si hay suficiente espacio para el cuerpo
+    if (longitud_cuerpo > capacidad - *longitud) {
+        *longitud = 0;
+        return -1;
+    }
+
+    if (longitud_cuerpo > 0)
+        memcpy(buffer + *longitud, cuerpo, longitud_cuerpo);
+
+    *longitud += longitud_cuerpo;
+    return 0;
+}
 
 int construir_respuesta_fija(char *buffer, size_t capacidad, size_t *longitud)
 {

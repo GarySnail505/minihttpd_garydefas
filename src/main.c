@@ -35,6 +35,8 @@ static void cerrar_cliente(int epoll_fd, struct conexion *cliente)
         perror("epoll_ctl DEL");
     }
 
+    if (cliente->archivo != NULL)
+        fclose(cliente->archivo);
     close(cliente->fd);
     free(cliente);
 }
@@ -63,8 +65,6 @@ static int preparar_siguiente(struct conexion *cliente)
     cliente->processed = fin == 0 ? cliente->used : fin;
 
     int codigo = 400;
-    char cuerpo[sizeof(cliente->buffer_salida)];
-    size_t longitud_cuerpo = 0;
     int keep_alive = 0;
     if (fin != 0) {
         char uri[256];
@@ -82,23 +82,23 @@ static int preparar_siguiente(struct conexion *cliente)
         if (codigo == 0) {
             printf("Cliente %d: GET válido, URI=%s, Host=%s, User-Agent=%s\n",
                    cliente->fd, uri, host, user_agent);
-                    if (strcmp(uri, "/") != 0) {
-                        codigo = 404;
-                    } else {
-                        int resultado = leer_archivo("www/index.html", cuerpo, sizeof(cuerpo),
-                                                     &longitud_cuerpo);
-                        if (resultado == 1)
-                            codigo = 404;
-                        else if (resultado == -1)
-                            return -1;
-                    }
+            if (strcmp(uri, "/") != 0) {
+                codigo = 404;
+            } else {
+                int resultado = abrir_archivo("www/index.html", &cliente->archivo,
+                                              &cliente->archivo_restante);
+                if (resultado == 1)
+                    codigo = 404;
+                else if (resultado == -1)
+                    return -1;
+            }
         }
     }
 
     cliente->keep_alive = codigo == 0 && keep_alive;
-    if (construir_respuesta(cliente->buffer_salida, sizeof(cliente->buffer_salida),
-                            &cliente->salida_len, codigo == 0 ? 200 : codigo,
-                            cliente->keep_alive, cuerpo, longitud_cuerpo) == -1) {
+    if (construir_cabecera(cliente->buffer_salida, sizeof(cliente->buffer_salida),
+                           &cliente->salida_len, codigo == 0 ? 200 : codigo,
+                           cliente->keep_alive, cliente->archivo_restante) == -1) {
         fprintf(stderr, "Cliente %d: error al preparar respuesta\n", cliente->fd);
         return -1;
     }
@@ -200,6 +200,8 @@ int main(int argc, char *argv[])
                         cliente->salida_len = 0;
                         cliente->salida_enviados = 0;
                         cliente->keep_alive = 1;
+                        cliente->archivo = NULL;
+                        cliente->archivo_restante = 0;
                         
                         if (socket_no_bloqueante(sfd) == -1) {
                             close(sfd);
@@ -245,9 +247,37 @@ int main(int argc, char *argv[])
                 if (resultado == 0)
                     continue;
 
-                if (resultado == -1 || !actual->keep_alive) {
+                if (resultado == -1) {
                     cerrar_cliente(epoll_fd, actual);
                     continue;
+                }
+
+                if (actual->archivo_restante > 0) {
+                    size_t bloque = sizeof(actual->buffer_salida);
+                    if (bloque > actual->archivo_restante)
+                        bloque = actual->archivo_restante;
+
+                    size_t leidos = fread(actual->buffer_salida, 1, bloque,
+                                         actual->archivo);
+                    if (leidos != bloque) {
+                        cerrar_cliente(epoll_fd, actual);
+                        continue;
+                    }
+
+                    actual->archivo_restante -= leidos;
+                    actual->salida_len = leidos;
+                    actual->salida_enviados = 0;
+                    continue;
+                }
+
+                if (!actual->keep_alive) {
+                    cerrar_cliente(epoll_fd, actual);
+                    continue;
+                }
+
+                if (actual->archivo != NULL) {
+                    fclose(actual->archivo);
+                    actual->archivo = NULL;
                 }
 
                 actual->estado = READING_HEADERS;

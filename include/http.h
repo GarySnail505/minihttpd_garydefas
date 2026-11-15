@@ -6,6 +6,16 @@
 /* Devuelve el limite tras CRLF CRLF, o 0 si los encabezados estan incompletos. */
 size_t headers_end(const char *buffer, size_t used);
 
+/* longitud recibe los bytes de cabecera; longitud_cuerpo se anuncia al cliente. */
+int construir_cabecera(
+    char *buffer,
+    size_t capacidad,
+    size_t *longitud,
+    int codigo,
+    int keep_alive,
+    size_t longitud_cuerpo
+);
+
 int construir_respuesta(
     char *buffer,
     size_t capacidad,

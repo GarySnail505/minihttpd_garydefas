@@ -3,6 +3,7 @@
 #define SERVER_H
 
 #include <stddef.h>
+#include <stdio.h>
 
 struct conexion {
     int fd;
@@ -18,6 +19,8 @@ struct conexion {
     size_t salida_len;
     size_t salida_enviados;
     int keep_alive;
+    FILE *archivo;
+    size_t archivo_restante;
 };
 
 int passivesock(const char *service, const char *transport, int qlen);
