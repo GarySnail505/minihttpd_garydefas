@@ -27,7 +27,8 @@ int construir_cabecera(
     size_t *longitud,
     int codigo,
     int keep_alive,
-    size_t longitud_cuerpo
+    size_t longitud_cuerpo,
+    const char *tipo_contenido
 ) {
     if (buffer == NULL || longitud == NULL)
         return -1;
@@ -39,10 +40,12 @@ int construir_cabecera(
     switch (codigo) {
     case 200:
         estado = "200 OK";
-        encabezados = "Content-Type: text/html\r\n";
         break;
     case 400:
         estado = "400 Bad Request";
+        break;
+    case 403:
+        estado = "403 Forbidden";
         break;
     case 404:
         estado = "404 Not Found";
@@ -56,9 +59,12 @@ int construir_cabecera(
     }
 
     const char *conexion = codigo == 200 && keep_alive ? "" : "Connection: close\r\n";
+    const char *tipo = codigo == 200 ? tipo_contenido : "";
     int len = snprintf(buffer, capacidad,
-                        "HTTP/1.1 %s\r\n%sContent-Length: %zu\r\n%s\r\n",
-                        estado, encabezados, longitud_cuerpo, conexion);
+                        "HTTP/1.1 %s\r\n%s%s%s%sContent-Length: %zu\r\n%s\r\n",
+                        estado, encabezados,
+                        codigo == 200 ? "Content-Type: " : "", tipo,
+                        codigo == 200 ? "\r\n" : "", longitud_cuerpo, conexion);
     if (len < 0 || (size_t)len >= capacidad)
         return -1;
 
@@ -76,7 +82,7 @@ int construir_respuesta(
     size_t longitud_cuerpo
 ) {
     if (construir_cabecera(buffer, capacidad, longitud, codigo,
-                           keep_alive, longitud_cuerpo) == -1)
+                           keep_alive, longitud_cuerpo, "text/html") == -1)
         return -1;
     
     // Verificar si hay suficiente espacio para el cuerpo

@@ -1,0 +1,11 @@
+# Archivos de compilacion
+/minihttpd
+*.o
+
+# Pruebas locales
+/prueba_respuesta
+/prueba_respuesta.c
+/www/pruebas/
+
+# Informe para el aula virtual
+/*-MiniHTTPd.pdf

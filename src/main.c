@@ -1,10 +1,13 @@
+#define _POSIX_C_SOURCE 200809L
 #include "server.h"
 #include "http.h"
 #include "files.h"
+#include "mime.h"
 
 #include <sys/epoll.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <limits.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -64,6 +67,7 @@ static int preparar_siguiente(struct conexion *cliente)
     cliente->estado = PROCESSING_REQUEST;
     cliente->processed = fin == 0 ? cliente->used : fin;
 
+    const char *tipo_contenido = NULL;
     int codigo = 400;
     int keep_alive = 0;
     if (fin != 0) {
@@ -82,23 +86,28 @@ static int preparar_siguiente(struct conexion *cliente)
         if (codigo == 0) {
             printf("Cliente %d: GET válido, URI=%s, Host=%s, User-Agent=%s\n",
                    cliente->fd, uri, host, user_agent);
-            if (strcmp(uri, "/") != 0) {
-                codigo = 404;
-            } else {
-                int resultado = abrir_archivo("www/index.html", &cliente->archivo,
+            char ruta[PATH_MAX];
+            codigo = resolver_ruta_www(uri, ruta);
+            if (codigo == 0) {
+                int resultado = abrir_archivo(ruta, &cliente->archivo,
                                               &cliente->archivo_restante);
                 if (resultado == 1)
                     codigo = 404;
-                else if (resultado == -1)
-                    return -1;
+                else if (resultado != 0)
+                    codigo = resultado;
+                else
+                    tipo_contenido = tipo_mime(ruta);
             }
+            if (codigo == -1)
+                return -1;
         }
     }
 
     cliente->keep_alive = codigo == 0 && keep_alive;
     if (construir_cabecera(cliente->buffer_salida, sizeof(cliente->buffer_salida),
                            &cliente->salida_len, codigo == 0 ? 200 : codigo,
-                           cliente->keep_alive, cliente->archivo_restante) == -1) {
+                           cliente->keep_alive, cliente->archivo_restante,
+                           tipo_contenido) == -1) {
         fprintf(stderr, "Cliente %d: error al preparar respuesta\n", cliente->fd);
         return -1;
     }

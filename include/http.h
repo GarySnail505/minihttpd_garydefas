@@ -13,7 +13,8 @@ int construir_cabecera(
     size_t *longitud,
     int codigo,
     int keep_alive,
-    size_t longitud_cuerpo
+    size_t longitud_cuerpo,
+    const char *tipo_contenido
 );
 
 int construir_respuesta(
